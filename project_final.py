@@ -16,11 +16,14 @@ WEIGHTS_LOC = "C3"
 AVG_RETURN_LOC = "D3"
 STATUS_LOC = "H2"
 STATUS_DEC_LOC = "I2"
+TRACK_STATUS_LOC = "H2"
+TRACK_STATUS_DEC_LOC = "I2"
 TIME_LOC = "H3"
+TRACK_TIME_LOC = "H3"
 P_VAR_LOC = "H11"
 P_AVG_RETURN_LOC = "H12"
 P_ASSET_COUNT = "J11"
-REALIZED_RETURN_LOC = "H20"
+REALIZED_RETURN_LOC = "C11"
 
 # Input Locations
 INTERVAL_LOC = "N3"
@@ -28,9 +31,9 @@ MODE_LOC = "N5"
 PERIOD_LOC = "N7"
 START_LOC = "N9"
 END_LOC = "N10"
-TRACK_INTERVAL_LOC = "N15"
-TRACK_START_LOC = "N17"
-TRACK_END_LOC = "N18"
+TRACK_INTERVAL_LOC = "D3"
+TRACK_START_LOC = "D5"
+TRACK_END_LOC = "D6"
 
 
 # exception for failed yfinance download 
@@ -144,9 +147,9 @@ def track_portfolio(tickers, weights, wb):
     # tickers is a yf.Tickers object     weights is an array of the weights     wb is an xlwings book caller object
     
     # get settings from wb
-    interval = wb.sheets['Input'].range(TRACK_INTERVAL_LOC).value
-    start = wb.sheets['Input'].range(TRACK_START_LOC).value
-    end = wb.sheets['Input'].range(TRACK_END_LOC).value + dt.timedelta(days=1)
+    interval = wb.sheets['Tracking'].range(TRACK_INTERVAL_LOC).value
+    start = wb.sheets['Tracking'].range(TRACK_START_LOC).value
+    end = wb.sheets['Tracking'].range(TRACK_END_LOC).value + dt.timedelta(days=1)
 
     # download and modify ticker history
     history = tickers.history(interval=interval, start=start, end=end, threads=True, auto_adjust=True)
@@ -160,8 +163,7 @@ def track_portfolio(tickers, weights, wb):
     realized_return = sum(weighted_realized_returns) - 1
 
     # output return to wb 
-    wb.sheets['Input'].range(REALIZED_RETURN_LOC).value = realized_return
-
+    wb.sheets['Tracking'].range(REALIZED_RETURN_LOC).value = realized_return
 
     # PLOT RETURNS
     # Get returns for each interval
@@ -184,13 +186,9 @@ def track_portfolio(tickers, weights, wb):
     ax = plt.subplot()
     ax.set_title("Portfolio Return")
 
-    # print(periodic_P_return.values)
     indexList = periodic_P_return.index.tolist()
-    # print(len(indexList)/5)
-    # print([x.strftime("%Y-%m-%d") for i,x in enumerate(indexList) if i % int(len(indexList)/5) == 0])
     xaxis = [x.strftime("%Y-%m-%d") for i,x in enumerate(indexList) if i % int(len(indexList)/5) == 0]
 
-    print(xaxis)
     ax.plot(periodic_P_return)
     ax.set_xticks(xaxis)
     ax.set_xlabel("Date")
@@ -304,14 +302,45 @@ def riskparity():
 
 
 
-
-def main():
+def track_handler():
 	try:
-		# get risk parity portfolio and update wb
-		tickers, weights, wb = riskparity()
-		# track this portfolio and update wb
+		# define the Excel book     
+		wb = xw.Book.caller()
+
+		# get the tickers and weights (list) 
+		tickList = wb.sheets['Input'].range(TICKERS_LOC).expand('down').value
+		weights = wb.sheets['Input'].range(WEIGHTS_LOC).expand('down').value
+
+		# generate tickers (list(yfinance.Ticker))
+		tickers = yf.Tickers(tickList)
+
+		s = time.time()
+
 		track_portfolio(tickers, weights, wb)
 
+		wb.sheets['Tracking'].range(TRACK_STATUS_LOC).value = "COMPLETE"
+
+		wb.sheets['Tracking'].range(TRACK_TIME_LOC).value = time.time()-s
+		wb.sheets['Tracking'].range(TRACK_TIME_LOC).number_format = '0.00'
+
+	# explain EailedDownload error on wb
+	except FailedDownload as ex:
+		wb = xw.Book.caller()
+		wb.sheets['Tracking'].range(TRACK_STATUS_LOC).value = "ERROR"
+		wb.sheets['Tracking'].range(TRACK_STATUS_DEC_LOC).value = "Failed to download " + str(ex.msg)
+		raise 
+	
+	# explain other error on wb
+	except Exception as ex:
+		wb = xw.Book.caller()
+		wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
+		wb.sheets['Input'].range(STATUS_DEC_LOC).value = str(ex)
+		raise 
+
+
+def riskparity_handler():
+	try:
+		riskparity()
 	# explain EailedDownload error on wb
 	except FailedDownload as ex:
 		wb = xw.Book.caller()
@@ -324,8 +353,35 @@ def main():
 		wb = xw.Book.caller()
 		wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
 		wb.sheets['Input'].range(STATUS_DEC_LOC).value = str(ex)
-		raise 
+		raise 	
 
+
+
+
+# def main():
+# 	try:
+# 		# get risk parity portfolio and update wb
+# 		tickers, weights, wb = riskparity()
+# 		# track this portfolio and update wb
+# 		track_portfolio(tickers, weights, wb)
+
+# 	# explain EailedDownload error on wb
+# 	except FailedDownload as ex:
+# 		wb = xw.Book.caller()
+# 		wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
+# 		wb.sheets['Input'].range(STATUS_DEC_LOC).value = "Failed to download " + str(ex.msg)
+# 		raise 
+	
+# 	# explain other error on wb
+# 	except Exception as ex:
+# 		wb = xw.Book.caller()
+# 		wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
+# 		wb.sheets['Input'].range(STATUS_DEC_LOC).value = str(ex)
+# 		raise 
+
+def main():
+	riskparity_handler()
+	track_handler()
 
 if __name__ == "__main__":
     xw.Book("project_final.xlsm").set_mock_caller()
