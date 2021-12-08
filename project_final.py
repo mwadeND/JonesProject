@@ -10,30 +10,30 @@ import datetime as dt
 import matplotlib.pyplot as plt
 TOLERANCE = 0.000000000000001
 
-# Output Locations
-TICKERS_LOC = "B3"
-WEIGHTS_LOC = "C3"
-AVG_RETURN_LOC = "D3"
-STATUS_LOC = "H2"
-STATUS_DEC_LOC = "I2"
-TRACK_STATUS_LOC = "H2"
-TRACK_STATUS_DEC_LOC = "I2"
-TIME_LOC = "H3"
-TRACK_TIME_LOC = "H3"
-P_VAR_LOC = "H11"
-P_AVG_RETURN_LOC = "H12"
-P_ASSET_COUNT = "J11"
-REALIZED_RETURN_LOC = "C11"
+# # Output Locations
+# TICKERS_LOC = "B3"
+# WEIGHTS_LOC = "C3"
+# AVG_RETURN_LOC = "D3"
+# STATUS_LOC = "H2"
+# STATUS_DEC_LOC = "I2"
+# TRACK_STATUS_LOC = "H2"
+# TRACK_STATUS_DEC_LOC = "I2"
+# TIME_LOC = "H3"
+# TRACK_TIME_LOC = "H3"
+# P_VAR_LOC = "H11"
+# P_AVG_RETURN_LOC = "H12"
+# P_ASSET_COUNT = "J11"
+# REALIZED_RETURN_LOC = "C11"
 
-# Input Locations
-INTERVAL_LOC = "N3"
-MODE_LOC = "N5"
-PERIOD_LOC = "N7"
-START_LOC = "N9"
-END_LOC = "N10"
-TRACK_INTERVAL_LOC = "D3"
-TRACK_START_LOC = "D5"
-TRACK_END_LOC = "D6"
+# # Input Locations
+# INTERVAL_LOC = "N3"
+# MODE_LOC = "N5"
+# PERIOD_LOC = "N7"
+# START_LOC = "N9"
+# END_LOC = "N10"
+# TRACK_INTERVAL_LOC = "D3"
+# TRACK_START_LOC = "D5"
+# TRACK_END_LOC = "D6"
 
 
 # exception for failed yfinance download 
@@ -202,56 +202,18 @@ def track_portfolio(tickers, weights, wb):
 
 
 
-def riskparity():
-    # define the Excel book     
-    wb = xw.Book.caller()
+def riskparity(portfolioRow, history, tickList):
+    
+    sampleData = history.loc[portfolioRow['Sample Start']: portfolioRow['Sample End']]
 
-    # initialize the time
-    s = time.time()
-
-    # get the tickers (list)
-    tickList = wb.sheets['Input'].range(TICKERS_LOC).expand('down').value
-    interval = wb.sheets['Input'].range(INTERVAL_LOC).value
-    mode = wb.sheets['Input'].range(MODE_LOC).value
-
-    # generate tickers (list(yfinance.Ticker))
-    tickers = yf.Tickers(tickList)
-
-    # download history for tickers
-    if (mode == "Period"):
-    	period = wb.sheets['Input'].range(PERIOD_LOC).value
-    	history = tickers.history(interval=interval, period=period, threads=True, auto_adjust=True)
-    else:
-    	start = wb.sheets['Input'].range(START_LOC).value
-    	end = wb.sheets['Input'].range(END_LOC).value + dt.timedelta(days=1)
-    	history = tickers.history(interval=interval, start=start, end=end, threads=True, auto_adjust=True)
-
-    # get the historical percent change (at close)
-    data = history["Close"].dropna(axis=0,how='all')
-    returns = data.pct_change()
+    returns = sampleData.pct_change()
     av_returns = returns.mean()
-
-    # check that all tickers are valid else rase FailedDownload error
-    if (list(yf.shared._ERRORS.keys())):
-    	ex = FailedDownload(list(yf.shared._ERRORS.keys()))
-    	raise ex
-
-    # for Bug Checking print the prices and returns
-    wb.sheets['Prices'].range("A1").expand().value = ""
-    wb.sheets['Prices'].range("A1").value = data
-    wb.sheets['Prices'].range("G1").value = returns
 
     # get the covariance matrix
     try:
     	cov = returns.cov()
     except Exception as ex:
     	raise FailedCov('Failed to create covariance matrix') from ex
-
-    # output number of shares 
-    wb.sheets['Input'].range(P_ASSET_COUNT).value = len(tickList)
-
-    # update the Excel table with the covariance matrix
-    wb.sheets['Unweighted Matrix'].tables["CovMatrix"].update(cov)
 
     # determine how much risk should be associated with each asset
     assets_risk_budget = [1 / len(tickList)] * len(tickList)
@@ -263,15 +225,6 @@ def riskparity():
     covList = cov.values.tolist()
     weights = _get_risk_parity_weights(covList, assets_risk_budget, init_weights)
 
-    # update weights and returns on the spreadsheet
-    wb.sheets['Input'].range(TICKERS_LOC).expand('down').value = [[t] for t in cov.index]
-    wb.sheets['Input'].range(WEIGHTS_LOC).expand('down').value = ""
-    wb.sheets['Input'].range(WEIGHTS_LOC).value = [[x] for x in weights]
-    wb.sheets['Input'].range(WEIGHTS_LOC).expand('down').number_format = "0.000%"
-    wb.sheets['Input'].range(AVG_RETURN_LOC).expand('down').value = ""
-    wb.sheets['Input'].range(AVG_RETURN_LOC).value = [[x] for x in av_returns]
-    wb.sheets['Input'].range(AVG_RETURN_LOC).expand('down').number_format = '0.000%'
-
     # create a weighted covariance matrix and total variance
     WeightedCov = covList
     p_variance = 0
@@ -282,78 +235,16 @@ def riskparity():
     WeightedCov = pd.DataFrame(WeightedCov, cov.index, cov.columns)
     p_return = sum(av_returns*weights)
 
-    # update weighted covariance matrix table with weighted covariance also update portfolio variance 
-    wb.sheets['Weighted Matrix'].tables['WeightedCovMatrix'].update(WeightedCov)
-    wb.sheets['Input'].range(P_VAR_LOC).value = p_variance
-    wb.sheets['Input'].range(P_AVG_RETURN_LOC).value = p_return
-    wb.sheets['Input'].range(P_AVG_RETURN_LOC).number_format = '0.000%'
+    # TODO update row to contain ratios
+    # portfolioRow['Sharpe Ratio'] = 0.212
 
-    # Update Status
-    if (math.isnan(p_return)):
-    	wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
-    else:
-    	wb.sheets['Input'].range(STATUS_LOC).value = "COMPLETE"
-    wb.sheets['Input'].range(TIME_LOC).value = time.time()-s
-    wb.sheets['Input'].range(TIME_LOC).number_format = '0.00'
-
-    # return for track_portfolio()
-    return tickers, weights, wb
+    return portfolioRow
+    # # return for track_portfolio()
+    # return tickers, weights, wb
 
 
 
 
-def track_handler():
-	try:
-		# define the Excel book     
-		wb = xw.Book.caller()
-
-		# get the tickers and weights (list) 
-		tickList = wb.sheets['Input'].range(TICKERS_LOC).expand('down').value
-		weights = wb.sheets['Input'].range(WEIGHTS_LOC).expand('down').value
-
-		# generate tickers (list(yfinance.Ticker))
-		tickers = yf.Tickers(tickList)
-
-		s = time.time()
-
-		track_portfolio(tickers, weights, wb)
-
-		wb.sheets['Tracking'].range(TRACK_STATUS_LOC).value = "COMPLETE"
-
-		wb.sheets['Tracking'].range(TRACK_TIME_LOC).value = time.time()-s
-		wb.sheets['Tracking'].range(TRACK_TIME_LOC).number_format = '0.00'
-
-	# explain EailedDownload error on wb
-	except FailedDownload as ex:
-		wb = xw.Book.caller()
-		wb.sheets['Tracking'].range(TRACK_STATUS_LOC).value = "ERROR"
-		wb.sheets['Tracking'].range(TRACK_STATUS_DEC_LOC).value = "Failed to download " + str(ex.msg)
-		raise 
-	
-	# explain other error on wb
-	except Exception as ex:
-		wb = xw.Book.caller()
-		wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
-		wb.sheets['Input'].range(STATUS_DEC_LOC).value = str(ex)
-		raise 
-
-
-def riskparity_handler():
-	try:
-		riskparity()
-	# explain EailedDownload error on wb
-	except FailedDownload as ex:
-		wb = xw.Book.caller()
-		wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
-		wb.sheets['Input'].range(STATUS_DEC_LOC).value = "Failed to download " + str(ex.msg)
-		raise 
-	
-	# explain other error on wb
-	except Exception as ex:
-		wb = xw.Book.caller()
-		wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
-		wb.sheets['Input'].range(STATUS_DEC_LOC).value = str(ex)
-		raise 	
 
 
 
@@ -379,9 +270,66 @@ def riskparity_handler():
 # 		wb.sheets['Input'].range(STATUS_DEC_LOC).value = str(ex)
 # 		raise 
 
+
+
+
+
+
 def main():
-	riskparity_handler()
-	track_handler()
+    # define the Excel book
+    wb = xw.Book.caller()
+
+    # get tickers
+    tickList = wb.sheets['Main'].range("Assets").expand('down').value
+
+    # generate tickers (list(yfinance.Ticker))
+    tickers = yf.Tickers(tickList)
+
+    # get table
+    table = wb.sheets['Main'].range('MainTable[[#all]]').options(pd.DataFrame, index=False).value
+    table = table.dropna(subset=['Portfolio Type', 'Sample Start', 'Sample End', 'Tracking Start', 'Tracking End'])
+    print(table)
+
+    # download start
+    donwloadStart = table['Sample Start'].min()
+    print(donwloadStart)
+
+    # download end
+    downloadEnd = table['Tracking End'].max() + dt.timedelta(days=1)
+    print(downloadEnd)
+
+    # get interval
+    interval = wb.sheets['Main'].range("interval").value
+    print(interval)
+
+    # download stock data
+    history = tickers.history(interval=interval, start=donwloadStart, end=downloadEnd, threads=True, auto_adjust=True)
+    closeHistory = history['Close']
+    print(closeHistory)
+
+    # check that all tickers are valid else rase FailedDownload error
+    if (list(yf.shared._ERRORS.keys())):
+        ex = FailedDownload(list(yf.shared._ERRORS.keys()))
+        raise ex
+
+    for index, row in table.iterrows():
+        print(row) 
+
+        # relaventData = closeHistory.loc[row['Sample Start']: row['Tracking End']]
+        # print(relaventData)
+
+        # run that type of portfolio analysis 
+        if (row["Portfolio Type"] == "Risk Parity"):
+            table.loc[index] = riskparity(row, closeHistory, tickList)
+
+    print(table)
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
     xw.Book("project_final.xlsm").set_mock_caller()
