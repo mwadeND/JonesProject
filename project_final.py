@@ -10,30 +10,6 @@ import datetime as dt
 import matplotlib.pyplot as plt
 TOLERANCE = 0.000000000000001
 
-# # Output Locations
-# TICKERS_LOC = "B3"
-# WEIGHTS_LOC = "C3"
-# AVG_RETURN_LOC = "D3"
-# STATUS_LOC = "H2"
-# STATUS_DEC_LOC = "I2"
-# TRACK_STATUS_LOC = "H2"
-# TRACK_STATUS_DEC_LOC = "I2"
-# TIME_LOC = "H3"
-# TRACK_TIME_LOC = "H3"
-# P_VAR_LOC = "H11"
-# P_AVG_RETURN_LOC = "H12"
-# P_ASSET_COUNT = "J11"
-# REALIZED_RETURN_LOC = "C11"
-
-# # Input Locations
-# INTERVAL_LOC = "N3"
-# MODE_LOC = "N5"
-# PERIOD_LOC = "N7"
-# START_LOC = "N9"
-# END_LOC = "N10"
-# TRACK_INTERVAL_LOC = "D3"
-# TRACK_START_LOC = "D5"
-# TRACK_END_LOC = "D6"
 
 
 # exception for failed yfinance download 
@@ -235,10 +211,13 @@ def riskparity(portfolioRow, history, tickList):
     WeightedCov = pd.DataFrame(WeightedCov, cov.index, cov.columns)
     p_return = sum(av_returns*weights)
 
-    # TODO update row to contain ratios
-    # portfolioRow['Sharpe Ratio'] = 0.212
+    colList= history.columns.tolist()
+    weightsDF = pd.DataFrame(columns=colList, index=[0])
+    for i, col in enumerate(colList):
+    	weightsDF[col][0] = weights[i]
+    # print(weightsDF)
 
-    return portfolioRow
+    return weightsDF
     # # return for track_portfolio()
     # return tickers, weights, wb
 
@@ -288,24 +267,24 @@ def main():
     # get table
     table = wb.sheets['Main'].range('MainTable[[#all]]').options(pd.DataFrame, index=False).value
     table = table.dropna(subset=['Portfolio Type', 'Sample Start', 'Sample End', 'Tracking Start', 'Tracking End'])
-    print(table)
+    # print(table)
 
     # download start
     donwloadStart = table['Sample Start'].min()
-    print(donwloadStart)
+    # print(donwloadStart)
 
     # download end
     downloadEnd = table['Tracking End'].max() + dt.timedelta(days=1)
-    print(downloadEnd)
+    # print(downloadEnd)
 
     # get interval
     interval = wb.sheets['Main'].range("interval").value
-    print(interval)
+    # print(interval)
 
     # download stock data
     history = tickers.history(interval=interval, start=donwloadStart, end=downloadEnd, threads=True, auto_adjust=True)
     closeHistory = history['Close']
-    print(closeHistory)
+    # print(closeHistory)
 
     # check that all tickers are valid else rase FailedDownload error
     if (list(yf.shared._ERRORS.keys())):
@@ -313,17 +292,11 @@ def main():
         raise ex
 
     for index, row in table.iterrows():
-        print(row) 
-
-        # relaventData = closeHistory.loc[row['Sample Start']: row['Tracking End']]
-        # print(relaventData)
-
         # run that type of portfolio analysis 
         if (row["Portfolio Type"] == "Risk Parity"):
-            table.loc[index] = riskparity(row, closeHistory, tickList)
-
-    print(table)
-
+            portfolioWeights = riskparity(row, closeHistory, tickList)
+            print(portfolioWeights)
+            # TODO: Track portfolio with given weights
 
 
 
