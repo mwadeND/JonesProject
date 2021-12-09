@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 TOLERANCE = 0.000000000000001
 
 
-
 # exception for failed yfinance download 
 class FailedDownload(Exception):
 	'''Raised when ticker(s) is invalid'''
@@ -119,64 +118,6 @@ def _get_risk_parity_weights(covariances, assets_risk_budget, initial_weights):
 # MY WORK ->
 
 
-def track_portfolio(tickers, weights, wb):
-    # tickers is a yf.Tickers object     weights is an array of the weights     wb is an xlwings book caller object
-    
-    # get settings from wb
-    interval = wb.sheets['Tracking'].range(TRACK_INTERVAL_LOC).value
-    start = wb.sheets['Tracking'].range(TRACK_START_LOC).value
-    end = wb.sheets['Tracking'].range(TRACK_END_LOC).value + dt.timedelta(days=1)
-
-    # download and modify ticker history
-    history = tickers.history(interval=interval, start=start, end=end, threads=True, auto_adjust=True)
-    data = history["Close"].dropna(axis=0,how='all')
-
-    # calculate total returns of each asset
-    returns = data.iloc[-1]/data.iloc[0]
-
-    # calculate weighted return of portfolio 
-    weighted_realized_returns = returns*weights
-    realized_return = sum(weighted_realized_returns) - 1
-
-    # output return to wb 
-    wb.sheets['Tracking'].range(REALIZED_RETURN_LOC).value = realized_return
-
-    # PLOT RETURNS
-    # Get returns for each interval
-    periodic_returns = data / data.iloc[0]
-
-    # weight the returns
-    weighted_periodic_returns = periodic_returns * weights
-
-    # sum to get portfolio return
-    periodic_P_return = weighted_periodic_returns.sum(axis=1) - 1
-
-    # pandas to matplotlib conversion
-    pd.plotting.register_matplotlib_converters()
-
-    # generate figure object
-    fig = plt.figure()
-    # fig.suptitle("Portfolio Return")
-
-    # generate plot of returns
-    ax = plt.subplot()
-    ax.set_title("Portfolio Return")
-
-    indexList = periodic_P_return.index.tolist()
-    xaxis = [x.strftime("%Y-%m-%d") for i,x in enumerate(indexList) if i % int(len(indexList)/5) == 0]
-
-    ax.plot(periodic_P_return)
-    ax.set_xticks(xaxis)
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Return (%)")
-    ax.grid(True)
-
-    # output plot to wb
-    wb.sheets['Plot'].pictures.add(fig, name="Test", update=True)
-
-
-
-
 
 def riskparity(portfolioRow, history, tickList):
     
@@ -215,41 +156,52 @@ def riskparity(portfolioRow, history, tickList):
     weightsDF = pd.DataFrame(columns=colList, index=[0])
     for i, col in enumerate(colList):
     	weightsDF[col][0] = weights[i]
-    # print(weightsDF)
 
     return weightsDF
-    # # return for track_portfolio()
-    # return tickers, weights, wb
 
 
 
 
+def portfolioHistory(data, weights):
+	returns = data.pct_change()
+	returns = returns.iloc[1:]
+	stkList = weights.columns.tolist()
+	for stk in stkList:
+		returns[stk] *= weights[stk][0]
+	pChanges = returns.sum(axis=1)
+	return pChanges
 
 
 
-
-# def main():
-# 	try:
-# 		# get risk parity portfolio and update wb
-# 		tickers, weights, wb = riskparity()
-# 		# track this portfolio and update wb
-# 		track_portfolio(tickers, weights, wb)
-
-# 	# explain EailedDownload error on wb
-# 	except FailedDownload as ex:
-# 		wb = xw.Book.caller()
-# 		wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
-# 		wb.sheets['Input'].range(STATUS_DEC_LOC).value = "Failed to download " + str(ex.msg)
-# 		raise 
-	
-# 	# explain other error on wb
-# 	except Exception as ex:
-# 		wb = xw.Book.caller()
-# 		wb.sheets['Input'].range(STATUS_LOC).value = "ERROR"
-# 		wb.sheets['Input'].range(STATUS_DEC_LOC).value = str(ex)
-# 		raise 
+def portfolioReturn(data, weights):
+	# return = final price / initial price
+	stkList = weights.columns.tolist()
+	pReturn = 0 
+	for stk in stkList:
+		pReturn += (data[stk].iloc[-1] / data[stk].iloc[0]) * weights[stk][0]
+	return pReturn - 1 
 
 
+
+def sharpeRatio(pChanges):
+	dailyExpectedReturn = pChanges.mean()
+	dailyStdev = pChanges.std()
+	annualizedExpectedReturn = (1+dailyExpectedReturn)**252 - 1
+	annualizedStdev =  dailyStdev * (252**(1/2))
+	return annualizedExpectedReturn / annualizedStdev
+
+
+
+def trackPortfolio(portfolioRow, history, weights):
+	trackData = history.loc[portfolioRow['Tracking Start']: portfolioRow['Tracking End']]
+
+	pChanges = portfolioHistory(trackData, weights)
+
+	pReturn = portfolioReturn(trackData, weights) 
+	portfolioRow["Return"] = pReturn
+
+	pSharpe = sharpeRatio(pChanges)
+	portfolioRow["Sharpe Ratio"] = pSharpe
 
 
 
@@ -257,6 +209,8 @@ def riskparity(portfolioRow, history, tickList):
 def main():
     # define the Excel book
     wb = xw.Book.caller()
+
+    s = time.time()
 
     # get tickers
     tickList = wb.sheets['Main'].range("Assets").expand('down').value
@@ -267,24 +221,19 @@ def main():
     # get table
     table = wb.sheets['Main'].range('MainTable[[#all]]').options(pd.DataFrame, index=False).value
     table = table.dropna(subset=['Portfolio Type', 'Sample Start', 'Sample End', 'Tracking Start', 'Tracking End'])
-    # print(table)
 
     # download start
     donwloadStart = table['Sample Start'].min()
-    # print(donwloadStart)
 
     # download end
     downloadEnd = table['Tracking End'].max() + dt.timedelta(days=1)
-    # print(downloadEnd)
 
     # get interval
-    interval = wb.sheets['Main'].range("interval").value
-    # print(interval)
+    interval = wb.sheets['Main'].range("Interval").value
 
     # download stock data
     history = tickers.history(interval=interval, start=donwloadStart, end=downloadEnd, threads=True, auto_adjust=True)
     closeHistory = history['Close']
-    # print(closeHistory)
 
     # check that all tickers are valid else rase FailedDownload error
     if (list(yf.shared._ERRORS.keys())):
@@ -295,8 +244,15 @@ def main():
         # run that type of portfolio analysis 
         if (row["Portfolio Type"] == "Risk Parity"):
             portfolioWeights = riskparity(row, closeHistory, tickList)
-            print(portfolioWeights)
-            # TODO: Track portfolio with given weights
+            trackPortfolio(row, closeHistory, portfolioWeights)
+            table.loc[index] = row 
+            # print(table)
+
+
+    wb.sheets['Main'].tables('MainTable').update(table, index=False)
+
+    wb.sheets['Main'].range('Status').value = "COMPLETE"
+    wb.sheets['Main'].range('Time').value = time.time() - s
 
 
 
