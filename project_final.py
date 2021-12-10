@@ -111,11 +111,9 @@ def _get_risk_parity_weights(covariances, assets_risk_budget, initial_weights):
     return weights
 
 
-
-
-
-
 # MY WORK ->
+
+
 
 
 
@@ -160,8 +158,6 @@ def riskparity(portfolioRow, history, tickList):
     return weightsDF
 
 
-
-
 def portfolioHistory(data, weights):
 	returns = data.pct_change()
 	returns = returns.iloc[1:]
@@ -170,7 +166,6 @@ def portfolioHistory(data, weights):
 		returns[stk] *= weights[stk][0]
 	pChanges = returns.sum(axis=1)
 	return pChanges
-
 
 
 def portfolioReturn(data, weights):
@@ -182,17 +177,46 @@ def portfolioReturn(data, weights):
 	return pReturn - 1 
 
 
-
 def sharpeRatio(pChanges):
 	dailyExpectedReturn = pChanges.mean()
 	dailyStdev = pChanges.std()
 	annualizedExpectedReturn = (1+dailyExpectedReturn)**252 - 1
 	annualizedStdev =  dailyStdev * (252**(1/2))
-	return annualizedExpectedReturn / annualizedStdev
+	return (annualizedExpectedReturn / annualizedStdev), annualizedStdev
 
 
+def downDev(pChanges, MAR):
+	sumNegValues = 0
+	for change in pChanges:
+		if (change < MAR):
+			sumNegValues += (change - MAR) ** 2
+	return (252*sumNegValues/len(pChanges))**(1/2)
 
-def trackPortfolio(portfolioRow, history, weights):
+
+def sortinoRatio(pChanges, pDownDev):
+	dailyExpectedReturn = pChanges.mean()
+	dailyStdev = pChanges.std()
+	annualizedExpectedReturn = (1+dailyExpectedReturn)**252 - 1
+	return annualizedExpectedReturn / pDownDev
+
+
+def beta(pChanges, indexHistory):
+	# cov of portfolio with the market / variance of the market 
+	iChanges = indexHistory.pct_change().iloc[1:]
+	pChangesDF = pd.DataFrame(data=pChanges, columns=['Portfolio'])
+	bothChanges = pChangesDF.join(iChanges, how='inner')
+	betaCov = bothChanges.cov()
+	return betaCov["Portfolio"]["Close"] / betaCov["Close"]["Close"]
+
+
+def treynorRatio(pChanges, pBeta):
+	dailyExpectedReturn = pChanges.mean()
+	dailyStdev = pChanges.std()
+	annualizedExpectedReturn = (1+dailyExpectedReturn)**252 - 1
+	return annualizedExpectedReturn / pBeta
+
+
+def trackPortfolio(portfolioRow, history, weights, indexHistory, MAR):
 	trackData = history.loc[portfolioRow['Tracking Start']: portfolioRow['Tracking End']]
 
 	pChanges = portfolioHistory(trackData, weights)
@@ -200,9 +224,19 @@ def trackPortfolio(portfolioRow, history, weights):
 	pReturn = portfolioReturn(trackData, weights) 
 	portfolioRow["Return"] = pReturn
 
-	pSharpe = sharpeRatio(pChanges)
+	pSharpe, pStDev = sharpeRatio(pChanges)
+	portfolioRow["StDev"] = pStDev
 	portfolioRow["Sharpe Ratio"] = pSharpe
 
+	pDownDev = downDev(pChanges, MAR)
+	pSortino = sortinoRatio(pChanges, pDownDev)
+	portfolioRow["Sortino Ratio"] = pSortino
+	portfolioRow["Downside Dev"] = pDownDev
+
+	pBeta = beta(pChanges, indexHistory)
+	pTreynor = treynorRatio(pChanges, pBeta)
+	portfolioRow["Treynor Ratio"] = pTreynor
+	portfolioRow["Beta"] = pBeta
 
 
 
@@ -231,9 +265,16 @@ def main():
     # get interval
     interval = wb.sheets['Main'].range("Interval").value
 
+    # get MAR
+    MAR = ((1 + wb.sheets['Main'].range("MAR").value) ** (1/252)) - 1 
+
     # download stock data
     history = tickers.history(interval=interval, start=donwloadStart, end=downloadEnd, threads=True, auto_adjust=True)
     closeHistory = history['Close']
+
+    # download S&P for comparison
+    index = yf.Ticker("SPY")
+    indexHistory = index.history(interval=interval, start=donwloadStart, end=downloadEnd, threads=True, auto_adjust=True)['Close']
 
     # check that all tickers are valid else rase FailedDownload error
     if (list(yf.shared._ERRORS.keys())):
@@ -244,19 +285,13 @@ def main():
         # run that type of portfolio analysis 
         if (row["Portfolio Type"] == "Risk Parity"):
             portfolioWeights = riskparity(row, closeHistory, tickList)
-            trackPortfolio(row, closeHistory, portfolioWeights)
+            trackPortfolio(row, closeHistory, portfolioWeights, indexHistory, MAR)
             table.loc[index] = row 
-            # print(table)
-
 
     wb.sheets['Main'].tables('MainTable').update(table, index=False)
 
     wb.sheets['Main'].range('Status').value = "COMPLETE"
     wb.sheets['Main'].range('Time').value = time.time() - s
-
-
-
-
 
 
 
